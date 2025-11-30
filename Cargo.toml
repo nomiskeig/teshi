@@ -1,0 +1,9 @@
+[package]
+name = "teshi"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.100"
+memmap2 = "0.9.9"
+derive_more = {version = "2.0.1", features = ["from", "into", "add", "index"]}
