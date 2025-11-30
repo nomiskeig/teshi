@@ -4,7 +4,7 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url = "github:numtide/flake-utils";
   };
-  output =
+  outputs =
     {
       self,
       nixpkgs,
@@ -17,8 +17,10 @@
     {
       devShells.${system}.default = pkgs.mkShell {
         packages = with pkgs; [
-          rustc
-          cargo
+#          rustc
+          rustfmt
+         #cargo
+          #rust-analyzer
         ];
       };
     };
