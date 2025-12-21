@@ -7,7 +7,6 @@ use memmap2::Mmap;
 mod cpu;
 mod memory;
 
-
 fn main() -> anyhow::Result<()> {
     println!("Hello, world, test!");
 
@@ -21,4 +20,3 @@ fn main() -> anyhow::Result<()> {
         cpu.step()?;
     }
 }
-
