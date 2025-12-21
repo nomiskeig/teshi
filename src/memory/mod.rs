@@ -2,13 +2,30 @@ use std::{
     fmt,
     ops::{Add, Index, IndexMut, Sub},
 };
-pub const HIGH_MEM_START: usize = 0xFF80;
-pub const HIGH_MEM_END: usize = 0xFFFE;
+pub const HIGH_MEM_START: u16 = 0xFF80;
+pub const HIGH_MEM_END: u16 = 0xFFFF;
+pub const WORKING_RAM_START: u16 = 0xC000;
+pub const WORKING_RAM_END: u16 = 0xCFFF;
+
 use anyhow::anyhow;
 use derive_more::{Add, From, Into};
 use memmap2::Mmap;
 
 use crate::cpu::registers::{Reg8Value, Reg16Value};
+
+#[derive(Debug)]
+pub struct RAM {
+    data: Vec<MemValue8>
+}
+
+impl RAM {
+    pub fn new(size: usize) -> Self {
+        return Self {
+            data: vec![MemValue8 { val: 0 }; size],
+        };
+    }
+    
+}
 
 #[derive(Debug)]
 pub struct ROM {
@@ -25,25 +42,17 @@ pub struct MemValue8 {
 }
 
 #[derive(Debug)]
-pub struct HighMem {
-    data: Vec<MemValue8>,
-}
-#[derive(Debug)]
 pub struct Memory {
     rom: ROM,
-    high_mem: HighMem,
+    high_mem: RAM,
+    working_ram: RAM,
 }
 enum ValWidth {
     WIDTH8,
     WIDTH16,
 }
 
-impl HighMem {
-    pub fn new() -> Self {
-        return Self {
-            data: vec![MemValue8 { val: 0 }; HIGH_MEM_END - HIGH_MEM_START],
-        };
-    }
+impl RAM {
     pub fn read_8(&self, address: Address) -> MemValue8 {
         return self.data[address];
     }
@@ -74,14 +83,16 @@ impl Memory {
     pub fn new(mmap: Mmap) -> Self {
         return Self {
             rom: ROM::new(mmap),
-            high_mem: HighMem::new(),
+            high_mem: RAM::new((HIGH_MEM_END - HIGH_MEM_START) as usize),
+            working_ram: RAM::new((WORKING_RAM_END -WORKING_RAM_START) as usize)
         };
     }
 
     pub fn read_mem_8(&self, address: Address) -> anyhow::Result<MemValue8> {
         match address.val {
             0x00..0x7FFF => Ok(self.rom.read_8(address)),
-            0xFF80..0xFFFE => Ok(self.high_mem.read_8(address - 0xFF80)),
+            WORKING_RAM_START..=WORKING_RAM_END => Ok(self.working_ram.read_8(address - WORKING_RAM_START)),
+            HIGH_MEM_START..=HIGH_MEM_END => Ok(self.high_mem.read_8(address - HIGH_MEM_START)),
             _ => Err(anyhow!("could not read address {:?}", address)),
         }
     }
@@ -95,12 +106,16 @@ impl Memory {
     pub fn write_mem_8(&mut self, address: Address, value: MemValue8) -> anyhow::Result<()> {
         match address.val {
             0x00..0xFFF => Err(anyhow!("cannot write to rom")),
-            0xFF80..0xFFFE => {
+            HIGH_MEM_START..=HIGH_MEM_END => {
                 self.high_mem
-                    .write_8(address - HIGH_MEM_START as u16, value);
+                    .write_8(address - HIGH_MEM_START, value);
                 return Ok(());
             }
-            _ => Err(anyhow!("could not read address {:?}", address)),
+            WORKING_RAM_START..=WORKING_RAM_END => {
+                self.working_ram.write_8(address - WORKING_RAM_START, value);
+                return Ok(());
+            }
+            _ => Err(anyhow!("could not write address {:?}", address)),
         }
     }
 }
@@ -235,6 +250,13 @@ impl From<MemValue16> for Reg16Value {
 impl From<MemValue8> for Reg8Value {
     fn from(value: MemValue8) -> Self {
         return Reg8Value { val: value.val };
+    }
+}
+impl Add<i32> for Reg8Value {
+    type Output = Reg8Value;
+
+    fn add(self, rhs: i32) -> Self::Output {
+        return Reg8Value {val: self.val + rhs as u8} ;
     }
 }
 

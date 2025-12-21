@@ -27,7 +27,7 @@ fn set_second_8(val: Reg8Value, orig: Reg16Value) -> Reg16Value {
     };
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum Reg8 {
     A,
     F,
@@ -38,7 +38,10 @@ pub enum Reg8 {
     H,
     L,
 }
-#[derive(Debug)]
+
+
+
+#[derive(Debug, Clone, Copy)]
 pub enum Reg16 {
     AF,
     BC,
@@ -46,6 +49,10 @@ pub enum Reg16 {
     HL,
     SP,
     PC,
+}
+#[derive(Debug, Clone, Copy)]
+pub enum Flag {
+    N, Z, H, C
 }
 impl fmt::Display for Reg16 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -92,6 +99,15 @@ pub struct Registers {
     pc: Reg16Value,
     flags: Flags,
 }
+fn get_flag_index(flag: Flag) -> i32{
+        match flag {
+            Flag::N => return 6,
+            Flag::Z => return 7,
+            Flag::H => return 5,
+            Flag::C => return 4,
+        };
+    
+}
 impl Registers {
     pub fn new() -> Self {
         return Self {
@@ -109,8 +125,26 @@ impl Registers {
             },
         };
     }
-    pub fn advance_pc(&mut self, amount: usize) {
+    pub fn get_flag(&self, flag: Flag) -> bool {
+
+        let index = get_flag_index(flag);
+        return self.af.val & (0x1 << index) != 0;
+        
+    }
+    pub fn set_flag(&mut self, flag: Flag) {
+        let index = get_flag_index(flag);
+        self.af.val = self.af.val | (0x1 << index);
+    }
+    pub fn clear_flag(&mut self, flag: Flag) {
+        let index = get_flag_index(flag);
+        self.af.val = self.af.val & !(0x1 << index);
+    }
+    pub fn advance_pc(&mut self, amount: i32) {
+        if (amount >= 0) {
         self.pc.val += amount as u16;
+        } else  {
+            self.pc.val -= -amount as u16;
+        }
     }
     pub fn set_reg_16(&mut self, reg: Reg16, val: Reg16Value) {
         match reg {

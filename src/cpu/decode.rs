@@ -1,5 +1,5 @@
 use crate::cpu::registers::{Reg8, Reg16};
-use crate::cpu::{Instruction, LDAAndHLChange, LoadADirection};
+use crate::cpu::{Instruction, LDAAndHLChange, LoadADirection, Condition};
 use crate::memory::{Address, Memory};
 use anyhow::anyhow;
 
@@ -13,6 +13,9 @@ pub fn decode_instruction(memory: &Memory, address: Address) -> anyhow::Result<I
         0x0E => Instruction::LDRegFromImm8(Reg8::C, memory.read_mem_8(address + 1)?.into()),
         0x11 => Instruction::LDRegFromImm16(Reg16::DE, memory.read_mem_16(address + 1)?.into()),
         0x12 => Instruction::LDAIndirect(Reg16::DE, LoadADirection::FromA),
+        0x14 => Instruction::IncReg(Reg8::D),
+        0x1C => Instruction::IncReg(Reg8::E),
+        0x20 => Instruction::CondJumpOffset(Condition::NZ, memory.read_mem_8(address + 1)?),
         0x21 => Instruction::LDRegFromImm16(Reg16::HL, memory.read_mem_16(address + 1)?.into()),
         0x2A => Instruction::LDAAndHL(LoadADirection::ToA, LDAAndHLChange::Increase),
         0x47 => Instruction::LDReg8ToReg8 {
