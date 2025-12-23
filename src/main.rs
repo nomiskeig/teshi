@@ -8,7 +8,6 @@ mod cpu;
 mod memory;
 
 fn main() -> anyhow::Result<()> {
-    println!("Hello, world, test!");
 
     let file =
         File::open("/home/simon/dev/teshi/04-op.gb").context("Could not open file with rom")?;

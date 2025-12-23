@@ -139,6 +139,13 @@ impl Registers {
         let index = get_flag_index(flag);
         self.af.val = self.af.val & !(0x1 << index);
     }
+    pub fn clear_flags(&mut self) {
+        self.clear_flag(Flag::C);
+        self.clear_flag(Flag::H);
+        self.clear_flag(Flag::N);
+        self.clear_flag(Flag::Z);
+
+    }
     pub fn advance_pc(&mut self, amount: i32) {
         if (amount >= 0) {
         self.pc.val += amount as u16;
