@@ -1,4 +1,5 @@
 pub mod decode;
+pub mod execute;
 pub mod interrupts;
 pub mod registers;
 
@@ -150,6 +151,15 @@ pub enum Condition {
     Z,
     Always,
 }
+#[derive(Debug, Copy, Clone)]
+pub struct VariingTInstructionCycles {
+    taken: usize,
+    notTaken: usize,
+}
+pub enum TInstructionCycles {
+    Default(usize),
+    Variing(VariingTInstructionCycles),
+}
 
 impl Instruction {
     pub fn get_length(&self) -> anyhow::Result<usize> {
@@ -178,6 +188,41 @@ impl Instruction {
             Instruction::CPImm8(_) => Ok(2),
         }
     }
+    pub fn get_t_cycles(&self) -> TInstructionCycles {
+        match self {
+            Instruction::Nop => TInstructionCycles::Default(4),
+            Instruction::Add => todo!(),
+            Instruction::DI => TInstructionCycles::Default(4),
+            Instruction::LDRegFromImm8(_, _) => TInstructionCycles::Default(8),
+            Instruction::LDRegFromImm16(_, _) => TInstructionCycles::Default(12),
+            Instruction::Jump(_) => TInstructionCycles::Default(16),
+            Instruction::LDReg8ToReg8 { source: _, dest: _ } => TInstructionCycles::Default(4),
+            Instruction::CondJump(_, _) => TInstructionCycles::Variing(VariingTInstructionCycles {
+                taken: 16,
+                notTaken: 12,
+            }),
+            Instruction::CondJumpOffset(_, _) => {
+                TInstructionCycles::Variing(VariingTInstructionCycles {
+                    taken: 12,
+                    notTaken: 8,
+                })
+            }
+            Instruction::LDAAndHL(_, _) => TInstructionCycles::Default(8),
+            Instruction::LDHImmAddress(_, _) => TInstructionCycles::Default(12),
+            Instruction::LDAIndirect(_, _) => TInstructionCycles::Default(8),
+            Instruction::LDAFromAddress(_, _) => TInstructionCycles::Default(16),
+            Instruction::IncReg8(_) => TInstructionCycles::Default(4),
+            Instruction::IncReg16(_) => TInstructionCycles::Default(8),
+            Instruction::DecReg(_) => TInstructionCycles::Default(4),
+            Instruction::Call(_) => TInstructionCycles::Default(24),
+
+            Instruction::Ret => TInstructionCycles::Default(24),
+            Instruction::OrReg(_) => TInstructionCycles::Default(4),
+            Instruction::Push(_) => TInstructionCycles::Default(16),
+            Instruction::Pop(_) => TInstructionCycles::Default(12),
+            Instruction::CPImm8(_) => TInstructionCycles::Default(8),
+        }
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -188,34 +233,32 @@ pub struct Flags {
     carry: bool,
 }
 pub struct CPU {
-    memory: Memory,
     regs: Registers,
     interrupt_controller: InterruptController,
 }
 
 impl CPU {
-    pub fn new(mmap: Mmap) -> Self {
+    pub fn new() -> Self {
         return Self {
-            memory: Memory::new(mmap),
             regs: Registers::new(),
             interrupt_controller: InterruptController::new(),
         };
     }
-    pub fn step(&mut self) -> anyhow::Result<()> {
-        let insContext = decode_instruction(&self.memory, self.regs.get_reg_16(Reg16::PC).into())?;
+    pub fn step(&mut self, memory: &mut Memory) -> anyhow::Result<usize> {
+        let insContext = decode_instruction(memory, self.regs.get_reg_16(Reg16::PC).into())?;
         println!("{} | {}", self, insContext);
 
         let ins = insContext.instruction;
         let length = ins.get_length()?;
-        self.execute_instruction(ins)?;
+        let m_cycles = self.execute_instruction(ins, memory)?;
 
-        Ok(())
+        Ok(m_cycles)
     }
-    fn push_to_stack(&mut self, value: u16) -> anyhow::Result<()> {
+    fn push_to_stack(&mut self, value: u16, memory: &mut Memory) -> anyhow::Result<()> {
         self.regs
             .set_reg_16(Reg16::SP, self.regs.get_reg_16(Reg16::SP) - 1);
 
-        self.memory.write_mem_8(
+        memory.write_mem_8(
             self.regs.get_reg_16(Reg16::SP).into(),
             MemValue8 {
                 val: ((value & 0xFF00) >> 0x8) as u8,
@@ -224,7 +267,7 @@ impl CPU {
         self.regs
             .set_reg_16(Reg16::SP, self.regs.get_reg_16(Reg16::SP) - 1);
 
-        self.memory.write_mem_8(
+        memory.write_mem_8(
             self.regs.get_reg_16(Reg16::SP).into(),
             MemValue8 {
                 val: (value & 0xFF) as u8,
@@ -232,61 +275,58 @@ impl CPU {
         )?;
         return Ok(());
     }
-    fn pop_from_stack(&mut self) -> anyhow::Result<u16> {
-        let lsb = self
-            .memory
-            .read_mem_8(self.regs.get_reg_16(Reg16::SP).into())?;
+    fn pop_from_stack(&mut self, memory: &Memory) -> anyhow::Result<u16> {
+        let lsb = memory.read_mem_8(self.regs.get_reg_16(Reg16::SP).into())?;
         self.regs
             .set_reg_16(Reg16::SP, self.regs.get_reg_16(Reg16::SP) + 1);
-        let msb = self
-            .memory
-            .read_mem_8(self.regs.get_reg_16(Reg16::SP).into())?;
+        let msb = memory.read_mem_8(self.regs.get_reg_16(Reg16::SP).into())?;
         self.regs
             .set_reg_16(Reg16::SP, self.regs.get_reg_16(Reg16::SP) + 1);
 
         return Ok(lsb.val as u16 | (msb.val as u16) << 0x8);
     }
 
-    pub fn execute_instruction(self: &mut Self, instruction: Instruction) -> anyhow::Result<()> {
+    pub fn execute_instruction(
+        self: &mut Self,
+        instruction: Instruction,
+        memory: &mut Memory,
+    ) -> anyhow::Result<usize> {
         let length = instruction.get_length()?;
         self.regs.advance_pc(length as i32);
+        let t_cycles = instruction.get_t_cycles();
+        let taken = false;
         match instruction {
-            Instruction::Nop => Ok(()),
+            Instruction::Nop => {}
             Instruction::Add => todo!(),
             Instruction::Jump(address) => {
                 self.regs.set_reg_16(Reg16::PC, address.into());
-                Ok(())
             }
             Instruction::LDRegFromImm16(reg, val) => {
                 self.regs.set_reg_16(reg, val);
-                Ok(())
             }
             Instruction::LDReg8ToReg8 { source, dest } => {
                 let val = self.regs.get_reg_8(source);
                 self.regs.set_reg_8(dest, val);
-                Ok(())
             }
             Instruction::CondJump(_, _) => todo!(),
             Instruction::LDHImmAddress(addr, dir) => match dir {
                 LoadADirection::FromA => {
-                    self.memory.write_mem_8(
+                    memory.write_mem_8(
                         Address {
                             val: addr.val as u16 + HIGH_MEM_START,
                         },
                         self.regs.get_reg_8(Reg8::A).into(),
                     )?;
-                    return Ok(());
                 }
                 LoadADirection::ToA => {
                     self.regs.set_reg_8(
                         Reg8::A,
-                        self.memory
+                        memory
                             .read_mem_8(Address {
                                 val: addr.val as u16 + HIGH_MEM_START,
                             })?
                             .into(),
                     );
-                    return Ok(());
                 }
             },
             Instruction::LDAAndHL(dir, change) => {
@@ -300,24 +340,21 @@ impl CPU {
                     LoadADirection::FromA => todo!(),
                     LoadADirection::ToA => {
                         self.regs
-                            .set_reg_8(Reg8::A, self.memory.read_mem_8(hl_value.into())?.into());
+                            .set_reg_8(Reg8::A, memory.read_mem_8(hl_value.into())?.into());
 
                         self.regs.set_reg_16(Reg16::HL, new_hl_value);
-                        return Ok(());
                     }
                 }
             }
             Instruction::LDRegFromImm8(reg, value) => {
                 self.regs.set_reg_8(reg, value);
-                Ok(())
             }
             Instruction::LDAIndirect(reg16, load_adirection) => match load_adirection {
                 LoadADirection::FromA => {
-                    self.memory.write_mem_8(
+                    memory.write_mem_8(
                         self.regs.get_reg_16(reg16).into(),
                         self.regs.get_reg_8(Reg8::A).into(),
                     )?;
-                    Ok(())
                 }
                 LoadADirection::ToA => todo!(),
             },
@@ -335,7 +372,6 @@ impl CPU {
                     _ => self.regs.clear_flag(Flag::H),
                 }
                 self.regs.set_reg_8(reg8, res);
-                Ok(())
             }
             Instruction::DecReg(reg8) => {
                 // TODO: this is missing handling of the H flag
@@ -351,50 +387,42 @@ impl CPU {
                     _ => self.regs.clear_flag(Flag::H),
                 }
                 self.regs.set_reg_8(reg8, res);
-                Ok(())
             }
             Instruction::CondJumpOffset(condition, mem_value8) => {
                 if self.cond_is_satisfied(condition) {
                     // this is a bit odd but we have to first cast the value to i8 so that we dont loose negative values
                     self.regs.advance_pc((mem_value8.val as i8).into());
                 }
-                Ok(())
             }
             Instruction::DI => {
                 self.interrupt_controller.disable_interrupts();
-                return Ok(());
             }
             Instruction::LDAFromAddress(address, load_adirection) => match load_adirection {
-                LoadADirection::FromA => self
-                    .memory
-                    .write_mem_8(address.into(), self.regs.get_reg_8(Reg8::A).into()),
+                LoadADirection::FromA => {
+                    memory.write_mem_8(address.into(), self.regs.get_reg_8(Reg8::A).into())?
+                }
                 LoadADirection::ToA => todo!(),
             },
             Instruction::Call(addr) => {
                 let pc = self.regs.get_reg_16(Reg16::PC).val;
-                self.push_to_stack(pc)?;
+                self.push_to_stack(pc, memory)?;
                 self.regs.set_reg_16(Reg16::PC, addr.into());
-                return Ok(());
             }
             Instruction::Ret => {
-                let addr = self.pop_from_stack()?;
+                let addr = self.pop_from_stack(memory)?;
                 self.regs.set_reg_16(Reg16::PC, Reg16Value { val: addr });
-                return Ok(());
             }
             Instruction::Push(reg16) => {
                 let reg_val = self.regs.get_reg_16(reg16).val;
-                self.push_to_stack(reg_val)?;
-                return Ok(());
+                self.push_to_stack(reg_val, memory)?;
             }
             Instruction::Pop(reg16) => {
-                let val = self.pop_from_stack()?;
+                let val = self.pop_from_stack(memory)?;
                 self.regs.set_reg_16(reg16, Reg16Value { val: val });
-                return Ok(());
             }
             Instruction::IncReg16(reg16) => {
                 let new_val = self.regs.get_reg_16(reg16) + 1;
                 self.regs.set_reg_16(reg16, new_val);
-                return Ok(());
             }
             Instruction::OrReg(reg8) => {
                 let val_reg = self.regs.get_reg_8(reg8);
@@ -405,11 +433,10 @@ impl CPU {
                     self.regs.set_flag(Flag::Z);
                 }
                 self.regs.set_reg_8(Reg8::A, Reg8Value { val: new_val });
-                return Ok(());
             }
             Instruction::CPImm8(mem_value8) => {
                 let val_a = self.regs.get_reg_8(Reg8::A).val;
-                let res = val_a - mem_value8.val;
+                let res = val_a.wrapping_sub(mem_value8.val);
                 self.regs.clear_flags();
                 self.regs.set_flag(Flag::N);
                 if res == 0 {
@@ -421,10 +448,19 @@ impl CPU {
                 if (res & (0x1 << 0x7)) > 0 {
                     self.regs.set_flag(Flag::C);
                 }
-
-                return Ok(());
             }
         }
+        let t_cycles_res = match t_cycles {
+            TInstructionCycles::Default(cycles) => cycles,
+
+            TInstructionCycles::Variing(variing_tinstruction_cycles) => {
+                match taken {
+                    true => variing_tinstruction_cycles.taken,
+                    false => variing_tinstruction_cycles.notTaken,   
+                }
+            }
+        };
+        return Ok(t_cycles_res);
     }
     fn cond_is_satisfied(&self, cond: Condition) -> bool {
         match cond {

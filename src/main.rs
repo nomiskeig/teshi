@@ -1,12 +1,13 @@
 use std::fs::File;
 
 use anyhow::Context;
-use cpu::CPU;
+use cpu::{InstructionContext, CPU};
 use memmap2::Mmap;
+use memory::Memory;
 
 mod cpu;
 mod memory;
-
+mod ppu;
 fn main() -> anyhow::Result<()> {
 
     let file =
@@ -14,8 +15,14 @@ fn main() -> anyhow::Result<()> {
 
     let mmap = unsafe { Mmap::map(&file)? };
 
-    let mut cpu = CPU::new(mmap);
+    let mut memory = Memory::new(mmap);
+    let mut cpu = CPU::new();
     loop {
-        cpu.step()?;
+        cpu.step(&mut memory)?;
     }
+}
+
+
+fn execute_instruction(instruction_context: InstructionContext, cpu: &mut CPU, memory: &mut Memory) {
+    
 }
